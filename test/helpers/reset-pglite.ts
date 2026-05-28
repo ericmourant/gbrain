@@ -8,6 +8,35 @@
  * that across every test in every file. Sharing one engine and wiping data
  * is two orders of magnitude faster.
  *
+ * Canonical block (copy verbatim into PGLite-using test files; enforced by
+ * scripts/check-test-isolation.sh rules R3 + R4):
+ *
+ *   import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+ *   import { resetPgliteState } from './helpers/reset-pglite.ts';
+ *
+ *   let engine: PGLiteEngine;
+ *
+ *   beforeAll(async () => {
+ *     engine = new PGLiteEngine();
+ *     await engine.connect({});
+ *     await engine.initSchema();
+ *   });
+ *
+ *   afterAll(async () => {
+ *     await engine.disconnect();
+ *   });
+ *
+ *   beforeEach(async () => {
+ *     await resetPgliteState(engine);
+ *   });
+ *
+ * Why this exact shape:
+ *   - `beforeAll` creates one engine per file (~20s schema init paid once).
+ *   - `beforeEach` resets user data without re-creating the engine.
+ *   - `afterAll(disconnect)` is REQUIRED. The v0.26.4 parallel runner loads
+ *     multiple test files into one bun process per shard; without disconnect,
+ *     engines leak across file boundaries within a shard process.
+ *
  * Implementation:
  *   1. TRUNCATE every public table CASCADE, including `sources` (so tests
  *      that register their own sources don't leak rows into the next test).
@@ -21,7 +50,12 @@
  */
 import type { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
-const PRESERVE_TABLES = new Set(['schema_version']);
+// v0.41.21.0: `page_generation_clock` is single-row infrastructure (like
+// schema_version) and must survive resetPgliteState. The row is seeded at
+// initSchema time by PGLITE_SCHEMA_SQL; TRUNCATEing the table breaks
+// page_generation_counter.test.ts AND any test that reads the clock value
+// after a reset. Production never truncates the clock table.
+const PRESERVE_TABLES = new Set(['schema_version', 'page_generation_clock']);
 
 export async function resetPgliteState(engine: PGLiteEngine): Promise<void> {
   const rows = await engine.executeRaw<{ tablename: string }>(

@@ -85,6 +85,15 @@ Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
 
+> **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
+> to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
+> Declared param keys are kept (intersected against the operation's spec); unknown
+> keys are counted but never named, and byte sizes round up to 1KB so size-probe
+> attacks can't binary-search secret content. Operators on a personal laptop who
+> want raw payloads back can pass `gbrain serve --http --log-full-params` (loud
+> stderr warning fires at startup). Multi-tenant deployments should leave it on
+> the redacted default.
+
 ### 2. Register OAuth clients
 
 Register clients from the **`/admin` dashboard**:
@@ -108,6 +117,24 @@ gbrain auth register-client perplexity \
   --scopes "read write"
 ```
 
+**v0.34 — source-scoped clients.** Multi-source brains can scope a client's
+write authority to one source and its read scope to a curated set with the
+new `--source` and `--federated-read` flags:
+
+```bash
+gbrain auth register-client dept-x-agent \
+  --grant-types client_credentials \
+  --scopes "read write" \
+  --source dept-x \
+  --federated-read dept-x,shared,parent-canon
+```
+
+`--source` controls the write authority — `put_page` / `add_link` / etc only
+land in `dept-x`. `--federated-read` controls the read axis independently;
+queries return rows from any of the listed sources. Omit both flags for the
+v0.33-compatible super-client shape. Pre-v0.34 clients are backfilled to
+`source_id='default'` on `gbrain upgrade`.
+
 Host-repo wrappers can register programmatically:
 
 ```ts
@@ -123,6 +150,18 @@ For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
 
 ### 3. Expose the server
+
+**v0.34 — bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
+To accept connections from the ngrok tunnel (or any non-loopback source),
+restart with `--bind`:
+
+```bash
+gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
+```
+
+When `--public-url` is set without `--bind`, a stderr WARN fires at
+startup so the misconfiguration ("the tunnel is up but my agent gets
+ECONNREFUSED") is loud.
 
 ```bash
 brew install ngrok
